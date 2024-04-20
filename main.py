@@ -1,24 +1,28 @@
 import numpy as np
+import pandas as pd
+
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from skyfield.api import Topos, load, EarthSatellite, utc
 from datetime import datetime, timedelta
 
-default_time = datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
+# default_time = datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
 ts = load.timescale()
 
 
 class GroundStation:
 
-    def __init__(self, latitude_degrees, longitude_degrees, name, elevation_meters=0):
-        """
-
-        :param latitude_degrees:
-        :param longitude_degrees:
-        :param elevation_meters: 海拔高度
-        """
-        self.location = Topos(latitude_degrees, longitude_degrees, elevation_meters)
+    def __init__(self, latitude_degrees, longitude_degrees, name, elevation_meters=0,bandwidth=32000,Xmtr_Power=30,Xmtr_Gain=0):
+        self.location = Topos(latitude_degrees=latitude_degrees, longitude_degrees=longitude_degrees, elevation_m=elevation_meters)
         self.name = name
+        # 海拔高度
+        self.elevation_meters=elevation_meters
+        # 带宽
+        self.bandwidth=bandwidth
+        # Xmtr_Power: 发射功率
+        self.Xmtr_Power=Xmtr_Power
+        # Xmtr_Gain: 发射增益
+        self.Xmtr_Gain=Xmtr_Gain
         # ts = load.timescale()
 
     def get_position_at_time(self, time):
@@ -38,13 +42,20 @@ class GroundStation:
 
 
 class Satellite:
-
-    def __init__(self, line1, line2, name):
+    default_time = datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
+    def __init__(self, line1, line2, name,Xmtr_Power=30,Xmtr_Gain=0):
+        
         self.satellite = EarthSatellite(line1, line2, name)
         self.name = name
+        # Xmtr_Power: 发射功率，单位为dBW
+        self.Xmtr_Power=Xmtr_Power
+        # Xmtr_Gain: 发射增益
+        self.Xmtr_Gain=Xmtr_Gain
         self.path = []
 
     def get_position_at_time(self, time):
+        if isinstance(time, datetime):
+            return self.satellite.at(ts.utc(time)).position.km
         return self.satellite.at(time).position.km
 
     def get_position_over_time(self, start_time, end_time, interval_seconds=60):
@@ -66,10 +77,22 @@ class Satellite:
         return positions
 
 
-def distance_satellite_to_satellite(s1: Satellite, s2: Satellite):
-    ss = s1.get_position_at_time(default_time)
-    print(ss)
-
+def read_tle_file(file_path):
+    satellites = {}
+    with open(file_path, 'r') as file:
+        lines = file.readlines()
+        num_lines = len(lines)
+        for i in range(0, num_lines, 3):
+            name = lines[i].strip()
+            line1 = lines[i + 1].strip()
+            line2 = lines[i + 2].strip()
+            satellites[name] = Satellite(line1,line2,name)
+    return satellites
+import math
+# 计算损耗，d单位为千米，f单位为MHz
+# 已知发射器的频率为14.5GHz
+def fspl(d,f):
+    return 20 * math.log10(d) + 20 * math.log10(f) + 32.44
 
 def distance_point_to_segment(point, segment):
     """
@@ -97,8 +120,25 @@ def distance_point_to_segment(point, segment):
         return min(distance_to_line, *distance_to_endpoints)
 
 
+def communicable(s:Satellite,g:GroundStation,time):
+    """
+    计算查看是否可以通信
+    :param s:
+    :param g:
+    :param time:
+    :return:
+    """
+    s_at=s.get_position_at_time(time)
+    g_at=g.get_position_at_time(time)
+    # print(s_at,g_at)
+    point=np.array([0,0,0])
+    segment=[np.array(s_at),np.array(g_at)]
+    range=distance_point_to_segment(point=point,segment=segment)
+    return range
+    
 class Figure:
-    def __init__(self):
+
+    def __init__(self,time=datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)):
         self.fig = plt.figure()
         self.ax = self.fig.add_subplot(111, projection="3d")
         u = np.linspace(0, 2 * np.pi, 100)
@@ -109,8 +149,9 @@ class Figure:
         self.ax.plot_surface(x, y, z, color='b', alpha=0.1)
         self.ax.set_xlabel('X')
         self.ax.set_ylabel('Y')
+        self.default_time=time
         self.ax.set_zlabel('Z')
-        self.ax.set_title('Satellite Orbits')
+        self.ax.set_title(f'Satellite Orbits {time}')
 
     def add_line(self, positions, name):
         x = []
@@ -129,34 +170,67 @@ class Figure:
         else:
             self.ax.scatter(position[0], position[1], position[2], label=name)
 
-    def add_satellite(self, satellite: Satellite, time=default_time):
-
+    def add_satellite(self, satellite: Satellite):
         self.add_line(satellite.get_path(), satellite.name)
-        self.add_point(satellite.get_position_at_time(ts.utc(time)))
-        print(satellite.get_position_at_time(ts.utc(time)))
+        self.add_point(satellite.get_position_at_time(ts.utc(self.default_time)))  # 使用全局时间变量
+        # print(f"{satellite.get_position_at_time(ts.utc(self.default_time))} time={self.default_time}")
 
-    def add_ground_station(self, station: GroundStation, time=default_time):
-        self.add_point(station.get_position_at_time(time), name=station.name)
+    def add_ground_station(self, station: GroundStation):
+        self.add_point(station.get_position_at_time(self.default_time), name=station.name)
+        print(station.get_position_at_time(self.default_time))
 
+    def add_text(self, position, text):
+        self.ax.text(position[0], position[1], position[2], text)
+    
     def show(self):
         self.ax.legend()
         plt.show()
+    
+    def update_time(self,d):
+        self.default_time=d
 
 
 if __name__ == "__main__":
-    t1 = Satellite('1 44713U 19074A   23288.88062483  .00011329  00000+0  77841-3 0  9997',
-                   '2 44713  53.0530 158.2800 0001466  90.7803 269.3354 15.06391354216744',
-                   'STARLINK-1007')
-    t2 = Satellite('1 44743U 19074AG  23289.11746495  .00037658  00000+0  25301-2 0  9995',
-                   '2 44743  53.0546 197.2150 0001327  88.5553 271.5588 15.06450493216393',
-                   'STARLINK-1038')
-    ground_station = GroundStation(latitude_degrees=51.5074, longitude_degrees=-0.1278, name="lond")
-    f = Figure()
-    f.add_satellite(t1)
-    f.add_satellite(t2)
-    f.add_ground_station(ground_station)
-    f.show()
-    # t2=Satellite
-    # point = np.array([0, 0, 0])
-    # segment = [np.array([0, 0, 1]), np.array([1, 1, 0])]
-    # print("点到线段的最小距离:", distance_point_to_segment(point, segment))
+    tle_path="D:\code\stk\starlink.txt"
+    sates=read_tle_file(tle_path)
+    satellites=[
+        sates["BLUEWALKER 3"],
+        sates["ION SCV-009"],
+        sates["SHERPA-LTC2"],
+        sates["STARLINK-1032"],
+        sates["STARLINK-1041"],
+        sates["STARLINK-1130 (DARKSAT)"],
+        sates["STARLINK-1136"],
+        sates["STARLINK-1155"],
+        sates["STARLINK-1172"]
+        ]
+    ground_station = GroundStation(latitude_degrees=34.27, longitude_degrees=108.94, name="xian")
+    
+    start_time=datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
+    end_time=start_time+timedelta(days=1)
+    while start_time<=end_time:
+        start_time+=timedelta(minutes=1)
+        list=[]
+        able=[]
+        for i in satellites:
+            tmp=communicable(i,ground_station,start_time)
+            list.append(tmp)
+            
+            if tmp>=6371:
+                able.append(i)
+        
+        for i in list:
+            if i>=6371:
+                ftmp=Figure(start_time)
+                # print(f"start={start_time}")
+                # print(f"ftmp.default_time={ftmp.default_time}")
+                for satellite in satellites: 
+                    ftmp.add_satellite(satellite)
+                ftmp.add_ground_station(ground_station)
+                tmp="avalable satellites:\n"
+                for s in able:
+                    tmp=tmp+s.name+"\n"
+                ftmp.add_text([0,0,0],tmp)
+                # print()
+                ftmp.show()
+                break 
