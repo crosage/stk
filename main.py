@@ -1,8 +1,6 @@
 import numpy as np
-import pandas as pd
-
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import argparse
 from skyfield.api import Topos, load, EarthSatellite, utc
 from datetime import datetime, timedelta
 
@@ -44,7 +42,7 @@ class GroundStation:
 class Satellite:
     default_time = datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
     def __init__(self, line1, line2, name,Xmtr_Power=30,Xmtr_Gain=0):
-        
+
         self.satellite = EarthSatellite(line1, line2, name)
         self.name = name
         # Xmtr_Power: 发射功率，单位为dBW
@@ -119,8 +117,28 @@ def distance_point_to_segment(point, segment):
         distance_to_endpoints = [np.linalg.norm(point - p1), np.linalg.norm(point - p2)]
         return min(distance_to_line, *distance_to_endpoints)
 
-
-def communicable(s:Satellite,g:GroundStation,time):
+def communicableByDistance(s:Satellite,g:GroundStation,time):
+    """
+    计算查看是否可以通信
+    :param s:
+    :param g:
+    :param time:
+    :return:
+    """
+    s_at=s.get_position_at_time(time)
+    g_at=g.get_position_at_time(time)
+    zero=np.array([0,0,0])
+    points=np.linspace(s_at,g_at,1000)
+    flag=True
+    minn=123456789
+    for point in points:
+        distance=np.linalg.norm(zero-point)
+        minn = min(minn, distance)
+        if distance<6371.0:
+            flag=False
+    # print(f"name:={s.name} minn{minn}")
+    return flag,minn
+def communicableByLine(s:Satellite,g:GroundStation,time):
     """
     计算查看是否可以通信
     :param s:
@@ -134,8 +152,10 @@ def communicable(s:Satellite,g:GroundStation,time):
     point=np.array([0,0,0])
     segment=[np.array(s_at),np.array(g_at)]
     range=distance_point_to_segment(point=point,segment=segment)
-    return range
-    
+    if range>6371:
+        return True
+    return False,range
+
 class Figure:
 
     def __init__(self,time=datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)):
@@ -181,56 +201,62 @@ class Figure:
 
     def add_text(self, position, text):
         self.ax.text(position[0], position[1], position[2], text)
-    
+
     def show(self):
         self.ax.legend()
         plt.show()
-    
+
     def update_time(self,d):
         self.default_time=d
 
 
 if __name__ == "__main__":
-    tle_path="D:\code\stk\starlink.txt"
-    sates=read_tle_file(tle_path)
-    satellites=[
-        sates["BLUEWALKER 3"],
-        sates["ION SCV-009"],
-        sates["SHERPA-LTC2"],
-        sates["STARLINK-1032"],
-        sates["STARLINK-1041"],
-        sates["STARLINK-1130 (DARKSAT)"],
-        sates["STARLINK-1136"],
-        sates["STARLINK-1155"],
-        sates["STARLINK-1172"]
-        ]
-    ground_station = GroundStation(latitude_degrees=34.27, longitude_degrees=108.94, name="xian")
-    
-    start_time=datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
-    end_time=start_time+timedelta(days=1)
+    parser = argparse.ArgumentParser(description="Simulate satellite and ground station communication.")
+    parser.add_argument("--tle_path", type=str, required=True, help="Path to the TLE file")
+    parser.add_argument("--start_time", type=str, required=True, help="Start time in the format 'YYYY-MM-DD HH:MM:SS'")
+    parser.add_argument("--end_time", type=str, required=True, help="Start time in the format 'YYYY-MM-DD HH:MM:SS'")
+    parser.add_argument("--ground_station_latitude_degrees", type=float, required=True, help="Latitude of the ground station in degrees")
+    parser.add_argument("--ground_station_longitude_degrees", type=float, required=True, help="Longitude of the ground station in degrees")
+    parser.add_argument("--ground_station_name", type=str, required=True, help="Name of the ground station")
+    parser.add_argument("--ground_station_elevation_meters", type=float, default=0, help="Elevation of the ground station in meters")
+    parser.add_argument("--ground_station_bandwidth", type=int, default=32000, help="Bandwidth of the ground station in Hz")
+    parser.add_argument("--ground_station_Xmtr_Power", type=float, default=30, help="Transmitter power of the ground station in dBW")
+    parser.add_argument("--ground_station_Xmtr_Gain", type=float, default=0, help="Transmitter gain of the ground station")
+    args=parser.parse_args()
+    ground_station = GroundStation(
+        latitude_degrees=args.ground_station_latitude_degrees,
+        longitude_degrees=args.ground_station_longitude_degrees,
+        name=args.ground_station_name,
+        elevation_meters=args.ground_station_elevation_meters,
+        bandwidth=args.ground_station_bandwidth,
+        Xmtr_Power=args.ground_station_Xmtr_Power,
+        Xmtr_Gain=args.ground_station_Xmtr_Gain,
+    )
+    start_time = datetime.strptime(args.start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=utc)
+    end_time=datetime.strptime(args.end_time,'%Y-%m-%d %H:%M:%S').replace(tzinfo=utc)
+    satellites=read_tle_file(args.tle_path)
     while start_time<=end_time:
         start_time+=timedelta(minutes=1)
         list=[]
         able=[]
-        for i in satellites:
-            tmp=communicable(i,ground_station,start_time)
+        for satellite in satellites.values():
+            tmp,range=communicableByDistance(satellite,ground_station,start_time)
             list.append(tmp)
-            
-            if tmp>=6371:
-                able.append(i)
-        
+            # can,range2=communicableByLine(satellite,ground_station,start_time)
+            # if tmp!=can:
+            #     print(f"********** {tmp} {range} {can} {range2}")
+            if tmp==True:
+                able.append(satellite)
+
         for i in list:
-            if i>=6371:
-                ftmp=Figure(start_time)
-                # print(f"start={start_time}")
-                # print(f"ftmp.default_time={ftmp.default_time}")
-                for satellite in satellites: 
-                    ftmp.add_satellite(satellite)
-                ftmp.add_ground_station(ground_station)
-                tmp="avalable satellites:\n"
+            if i == True:
+                fig = Figure(start_time)
+                for satellite in satellites.values():
+                    fig.add_satellite(satellite)
+                fig.add_ground_station(ground_station)
+                tmp = "Available satellites:\n"
                 for s in able:
-                    tmp=tmp+s.name+"\n"
-                ftmp.add_text([0,0,0],tmp)
-                # print()
-                ftmp.show()
-                break 
+                    tmp += s.name + "\n"
+                fig.add_text([0, 0, 0], tmp)
+                fig.show()
+                break

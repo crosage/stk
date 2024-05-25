@@ -26,7 +26,7 @@ def deal_C(Access_path,Bent_Pipe_path,name,output_path):
         C=bandwidth*math.log2(1+SNR)
         data = {
             "name": name,
-            "time": time1,
+            "time": time1.replace(" ","-"),
             "range": range,
             "SNR": SNR,
             "t": t,
@@ -44,12 +44,13 @@ def deal_namae(name):
     deal_C(path,path2,name,output_path)
 
 if __name__ == "__main__":
-    deal_namae("sherpa-ltc2")
-    deal_namae("starlink-1032")
-    deal_namae("bluewalker_3_53807")
-    deal_namae("ion_scv-009_55441")
-    deal_namae("starlink-1041")
-    deal_namae("starlink-1130_darksat")
-    deal_namae("starlink-1136")
-    deal_namae("starlink-1155")
+    # deal_namae("starlink-1231")
+    # deal_namae("sherpa-ltc2")
+    # deal_namae("starlink-1032")
+    # deal_namae("bluewalker_3_53807")
+    # deal_namae("ion_scv-009_55441")
+    # deal_namae("starlink-1041")
+    # deal_namae("starlink-1130_darksat")
+    # deal_namae("starlink-1136")
+    # deal_namae("starlink-1155")
     deal_namae("starlink-1172")
