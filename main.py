@@ -1,3 +1,4 @@
+import json
 import random
 
 import numpy as np
@@ -123,7 +124,7 @@ def get_snr(S,N):
     return S/N
 
 def get_c(bandwidth,SNR):
-    return bandwidth*math.log2(1+SNR)
+    return bandwidth*math.log2(1.0+SNR)
 def get_distance(s:Satellite,g:GroundStation,time):
     s_at=s.get_position_at_time(time)
     g_at=g.get_position_at_time(time)
@@ -259,6 +260,9 @@ if __name__ == "__main__":
     parser.add_argument("--ground_station_bandwidth", type=int, default=32000, help="Bandwidth of the ground station in Hz")
     parser.add_argument("--ground_station_Xmtr_Power", type=float, default=30, help="Transmitter power of the ground station in dBW")
     parser.add_argument("--ground_station_Xmtr_Gain", type=float, default=0, help="Transmitter gain of the ground station")
+    parser.add_argument("--ground_station_Rcvr_Gain", type=float, default=0,help="Receive gain of the ground station")
+    parser.add_argument("--json_output_path", type=str, help="Path to save the output JSON file")
+
     args=parser.parse_args()
     ground_station = GroundStation(
         latitude_degrees=args.ground_station_latitude_degrees,
@@ -272,6 +276,7 @@ if __name__ == "__main__":
     start_time = datetime.strptime(args.start_time, '%Y-%m-%d %H:%M:%S').replace(tzinfo=utc)
     end_time=datetime.strptime(args.end_time,'%Y-%m-%d %H:%M:%S').replace(tzinfo=utc)
     satellites=read_tle_file(args.tle_path)
+    json_data=[]
     while start_time<=end_time:
         start_time+=timedelta(minutes=1)
         list=[]
@@ -284,33 +289,45 @@ if __name__ == "__main__":
 
         for i in list:
             if i == True:
-                fig = Figure(start_time)
-                for satellite in satellites.values():
-                    fig.add_satellite(satellite)
-                fig.add_ground_station(ground_station)
+                if args.json_output_path==None:
+                    fig = Figure(start_time)
+                    for satellite in satellites.values():
+                        fig.add_satellite(satellite)
+                    fig.add_ground_station(ground_station)
                 tmp = "Available satellites:\n"
                 for s in able:
                     tmp += s.name + "\n"
                     # 根据NASA数据 Environmental Conditions for Space Flight Hardware - A Survey
                     # 低轨卫星温度取摄氏度-65-125
                     random_temperature = random.uniform(-65+273.15, 125+273.15)
-                    # 噪声（单位db）
-                    noisedb=get_noise(random_temperature,s.bandwidth)
-                    # 噪声
-                    noise=10.0**(noisedb/10.0)
+                    # 噪声（单位db）CWNA教材铁质框架热噪声
+                    noise=-6
                     # 距离
                     distance=get_distance(s,ground_station,start_time)
-                    # 发送损耗（单位db）
-                    fspldb=fspl(distance,14.5*1000)
                     # 发送损耗
-                    fs=fspldb**(fspldb/10.0)
+                    fs=fspl(distance,14.5*1000)
                     # 接收功率
                     ptr=get_prx(ground_station.Xmtr_Power,ground_station.Xmtr_Gain,fs,noise,s.Rcvr_Gain)
                     # 信噪比
                     SNR=get_snr(ptr,noise)
                     # 信道容量
                     C=get_c(ground_station.bandwidth,SNR)
+                    data={
+                        "name":s.name,
+                        "time":start_time.isoformat(),
+                        "range":distance,
+                        "SNR":SNR,
+                        "t":get_t(distance),
+                        "channel_capacity":C
+                    }
+                    if args.json_output_path:
+                        json_data.append(data)
 
-                fig.add_text([0, 0, 0], tmp)
-                fig.show()
+                    print(f"温度： {random_temperature} 噪声：{noise} 发送损耗：{fs} ptr：{ptr} SNR：{SNR} distance：{distance} C：{C}")
+                if args.json_output_path==None:
+                    fig.add_text([0, 0, 0], tmp)
+                    fig.show()
                 break
+    if args.json_output_path:
+        with open(args.json_output_path, "w") as json_file:
+            json.dump(json_data,json_file,indent=4)
