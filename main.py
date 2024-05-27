@@ -1,3 +1,5 @@
+import random
+
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse
@@ -9,19 +11,19 @@ ts = load.timescale()
 
 
 class GroundStation:
-
-    def __init__(self, latitude_degrees, longitude_degrees, name, elevation_meters=0,bandwidth=32000,Xmtr_Power=30,Xmtr_Gain=0):
+    def __init__(self, latitude_degrees, longitude_degrees, name, elevation_meters=0, bandwidth=32000, Xmtr_Power=30, Xmtr_Gain=0, Rcvr_Gain=0):
         self.location = Topos(latitude_degrees=latitude_degrees, longitude_degrees=longitude_degrees, elevation_m=elevation_meters)
         self.name = name
         # 海拔高度
-        self.elevation_meters=elevation_meters
+        self.elevation_meters = elevation_meters
         # 带宽
-        self.bandwidth=bandwidth
+        self.bandwidth = bandwidth
         # Xmtr_Power: 发射功率
-        self.Xmtr_Power=Xmtr_Power
+        self.Xmtr_Power = Xmtr_Power
         # Xmtr_Gain: 发射增益
-        self.Xmtr_Gain=Xmtr_Gain
-        # ts = load.timescale()
+        self.Xmtr_Gain = Xmtr_Gain
+        # Rcvr_Gain: 接受增益
+        self.Rcvr_Gain = Rcvr_Gain
 
     def get_position_at_time(self, time):
         if isinstance(time, datetime):
@@ -41,14 +43,17 @@ class GroundStation:
 
 class Satellite:
     default_time = datetime(2024, 2, 6, 12, 0, 0, tzinfo=utc)
-    def __init__(self, line1, line2, name,Xmtr_Power=30,Xmtr_Gain=0):
 
+    def __init__(self, line1, line2, name, Xmtr_Power=30, bandwidth=32000, Xmtr_Gain=0, Rcvr_Gain=0):
         self.satellite = EarthSatellite(line1, line2, name)
         self.name = name
+        self.bandwidth = bandwidth
         # Xmtr_Power: 发射功率，单位为dBW
-        self.Xmtr_Power=Xmtr_Power
+        self.Xmtr_Power = Xmtr_Power
         # Xmtr_Gain: 发射增益
-        self.Xmtr_Gain=Xmtr_Gain
+        self.Xmtr_Gain = Xmtr_Gain
+        # Rcvr_Gain: 接收增益
+        self.Rcvr_Gain = Rcvr_Gain
         self.path = []
 
     def get_position_at_time(self, time):
@@ -92,6 +97,38 @@ import math
 def fspl(d,f):
     return 20 * math.log10(d) + 20 * math.log10(f) + 32.44
 
+# 计算时延，d单位千米
+def get_t(d):
+    return 2*d/((3*(10**8))/1000)
+
+# T开氏温度
+# W信号带宽
+# Nf:接收机噪声系数一般9dB
+def get_noise(T,W):
+    #玻尔兹曼常数
+    k=1.380649*(10**-23)
+    Nf=9
+    noise=10.0*math.log10(k*W*T)+Nf
+    return noise
+
+def get_prx(ptx,gtx,fspl,noise,grx):
+    # ptx:发送功率
+    # gtx:发送增益
+    # fspl:路径损耗
+    # noise:噪声
+    # grx:接收增益
+
+    return ptx+gtx-fspl-noise+grx
+def get_snr(S,N):
+    return S/N
+
+def get_c(bandwidth,SNR):
+    return bandwidth*math.log2(1+SNR)
+def get_distance(s:Satellite,g:GroundStation,time):
+    s_at=s.get_position_at_time(time)
+    g_at=g.get_position_at_time(time)
+    distance = np.linalg.norm(s_at - g_at)
+    return distance
 def distance_point_to_segment(point, segment):
     """
     点到线段的距离
@@ -242,9 +279,6 @@ if __name__ == "__main__":
         for satellite in satellites.values():
             tmp,range=communicableByDistance(satellite,ground_station,start_time)
             list.append(tmp)
-            # can,range2=communicableByLine(satellite,ground_station,start_time)
-            # if tmp!=can:
-            #     print(f"********** {tmp} {range} {can} {range2}")
             if tmp==True:
                 able.append(satellite)
 
@@ -257,6 +291,26 @@ if __name__ == "__main__":
                 tmp = "Available satellites:\n"
                 for s in able:
                     tmp += s.name + "\n"
+                    # 根据NASA数据 Environmental Conditions for Space Flight Hardware - A Survey
+                    # 低轨卫星温度取摄氏度-65-125
+                    random_temperature = random.uniform(-65+273.15, 125+273.15)
+                    # 噪声（单位db）
+                    noisedb=get_noise(random_temperature,s.bandwidth)
+                    # 噪声
+                    noise=10.0**(noisedb/10.0)
+                    # 距离
+                    distance=get_distance(s,ground_station,start_time)
+                    # 发送损耗（单位db）
+                    fspldb=fspl(distance,14.5*1000)
+                    # 发送损耗
+                    fs=fspldb**(fspldb/10.0)
+                    # 接收功率
+                    ptr=get_prx(ground_station.Xmtr_Power,ground_station.Xmtr_Gain,fs,noise,s.Rcvr_Gain)
+                    # 信噪比
+                    SNR=get_snr(ptr,noise)
+                    # 信道容量
+                    C=get_c(ground_station.bandwidth,SNR)
+
                 fig.add_text([0, 0, 0], tmp)
                 fig.show()
                 break
